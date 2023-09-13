@@ -20,6 +20,7 @@ func CreateDatabaseAdapter(connection *sql.DB) *DatabaseAdapter {
 
 func (adapter *DatabaseAdapter) GetValue(key string) (string, error) {
 	rows, err := adapter.connection.Query("SELECT * FROM stored_data WHERE key=$1", key)
+	defer rows.Close()
 
 	if err != nil {
 		return "", err
