@@ -14,8 +14,9 @@ func main() {
 		return
 	}
 
+	defer database.Close()
+
 	adapter := adapters.CreateDatabaseAdapter(database)
 	server := utils.CreateServer(adapter)
-
 	server.Start(3000)
 }
