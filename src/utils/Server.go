@@ -18,11 +18,17 @@ func CreateServer(databaseAdapter *adapters.DatabaseAdapter) *Server {
 }
 
 func (server *Server) prepare() {
+	// Store Handler
+	storeServer := requests.CreateStoreServer(server.DatabaseAdapter)
+	storeHandler := http.HandlerFunc(storeServer.RequestValue)
+	http.Handle("/store/", storeHandler)
+
 	// Bind Ping
 	pingHandler := http.HandlerFunc(requests.Ping)
 	http.Handle("/", pingHandler)
 }
 
 func (server *Server) Start(port int) {
+	fmt.Println(fmt.Sprintf("<---- Starting Server at Port: %v", port))
 	http.ListenAndServe(fmt.Sprintf(":%v", port), nil)
 }
