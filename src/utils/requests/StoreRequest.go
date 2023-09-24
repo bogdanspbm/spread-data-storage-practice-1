@@ -5,15 +5,17 @@ import (
 	"io/ioutil"
 	"net/http"
 	"spread-data-storage-practice-1/src/utils/adapters"
+	"spread-data-storage-practice-1/src/utils/objects"
 	"strings"
 )
 
 type StoreServer struct {
 	adapter *adapters.DatabaseAdapter
+	manager *objects.TransactionManager
 }
 
-func CreateStoreServer(adapter *adapters.DatabaseAdapter) *StoreServer {
-	return &StoreServer{adapter: adapter}
+func CreateStoreServer(adapter *adapters.DatabaseAdapter, manager *objects.TransactionManager) *StoreServer {
+	return &StoreServer{adapter: adapter, manager: manager}
 }
 
 func (server *StoreServer) RequestValue(w http.ResponseWriter, r *http.Request) {
@@ -47,13 +49,19 @@ func (server *StoreServer) RequestValue(w http.ResponseWriter, r *http.Request) 
 }
 
 func (server *StoreServer) GetValue(w http.ResponseWriter, key string) {
-	value, err := server.adapter.GetValue(key)
 
-	if err != nil {
+	request := objects.Request{Command: func() objects.Response {
+		value, err := server.adapter.GetValue(key)
+		return objects.Response{Body: value, Error: err}
+	}}
+	response := server.manager.SendRequest(request)
+
+	if response.Error != nil {
 		makeErrorResponse(w, "can't find value with key", http.StatusInternalServerError)
 		return
 	}
 
+	value := response.Body
 	w.Write([]byte(fmt.Sprintf("{\"value\" : \"%v\"}", value)))
 }
 
@@ -73,9 +81,13 @@ func (server *StoreServer) PutValue(w http.ResponseWriter, r *http.Request, key 
 		return
 	}
 
-	_, err = server.adapter.SetValue(key, value)
+	request := objects.Request{Command: func() objects.Response {
+		_, err := server.adapter.SetValue(key, value)
+		return objects.Response{Error: err}
+	}}
+	response := server.manager.SendRequest(request)
 
-	if err != nil {
+	if response.Error != nil {
 		makeErrorResponse(w, "can't set value", http.StatusInternalServerError)
 		return
 	}

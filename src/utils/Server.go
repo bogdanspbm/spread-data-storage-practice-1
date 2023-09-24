@@ -4,22 +4,24 @@ import (
 	"fmt"
 	"net/http"
 	"spread-data-storage-practice-1/src/utils/adapters"
+	"spread-data-storage-practice-1/src/utils/objects"
 	"spread-data-storage-practice-1/src/utils/requests"
 )
 
 type Server struct {
-	DatabaseAdapter *adapters.DatabaseAdapter
+	DatabaseAdapter    *adapters.DatabaseAdapter
+	TransactionManager *objects.TransactionManager
 }
 
-func CreateServer(databaseAdapter *adapters.DatabaseAdapter) *Server {
-	webServer := &Server{DatabaseAdapter: databaseAdapter}
+func CreateServer(databaseAdapter *adapters.DatabaseAdapter, manager *objects.TransactionManager) *Server {
+	webServer := &Server{DatabaseAdapter: databaseAdapter, TransactionManager: manager}
 	webServer.prepare()
 	return webServer
 }
 
 func (server *Server) prepare() {
 	// Store Handler
-	storeServer := requests.CreateStoreServer(server.DatabaseAdapter)
+	storeServer := requests.CreateStoreServer(server.DatabaseAdapter, server.TransactionManager)
 	storeHandler := http.HandlerFunc(storeServer.RequestValue)
 	http.Handle("/store/", storeHandler)
 
