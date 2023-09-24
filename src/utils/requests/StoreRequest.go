@@ -12,10 +12,11 @@ import (
 type StoreServer struct {
 	adapter *adapters.DatabaseAdapter
 	manager *objects.TransactionManager
+	journal *[]objects.Request
 }
 
-func CreateStoreServer(adapter *adapters.DatabaseAdapter, manager *objects.TransactionManager) *StoreServer {
-	return &StoreServer{adapter: adapter, manager: manager}
+func CreateStoreServer(adapter *adapters.DatabaseAdapter, manager *objects.TransactionManager, journal *[]objects.Request) *StoreServer {
+	return &StoreServer{adapter: adapter, manager: manager, journal: journal}
 }
 
 func (server *StoreServer) RequestValue(w http.ResponseWriter, r *http.Request) {
@@ -50,10 +51,8 @@ func (server *StoreServer) RequestValue(w http.ResponseWriter, r *http.Request) 
 
 func (server *StoreServer) GetValue(w http.ResponseWriter, key string) {
 
-	request := objects.Request{Command: func() objects.Response {
-		value, err := server.adapter.GetValue(key)
-		return objects.Response{Body: value, Error: err}
-	}}
+	request := objects.Request{Name: "get_value", Args: []string{key}}
+	*server.journal = append(*server.journal, request)
 	response := server.manager.SendRequest(request)
 
 	if response.Error != nil {
@@ -81,10 +80,8 @@ func (server *StoreServer) PutValue(w http.ResponseWriter, r *http.Request, key 
 		return
 	}
 
-	request := objects.Request{Command: func() objects.Response {
-		_, err := server.adapter.SetValue(key, value)
-		return objects.Response{Error: err}
-	}}
+	request := objects.Request{Name: "put_value", Args: []string{key, value}}
+	*server.journal = append(*server.journal, request)
 	response := server.manager.SendRequest(request)
 
 	if response.Error != nil {

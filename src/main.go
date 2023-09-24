@@ -18,7 +18,7 @@ func main() {
 	defer database.Close()
 
 	adapter := adapters.CreateDatabaseAdapter(database)
-	manager := objects.CreateTransactionManager()
+	manager := objects.CreateTransactionManager(adapter)
 	server := utils.CreateServer(adapter, manager)
 	server.Start(3000)
 }
