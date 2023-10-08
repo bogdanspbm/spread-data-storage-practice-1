@@ -6,17 +6,19 @@ import (
 	"net/http"
 	"spread-data-storage-practice-1/src/utils/adapters"
 	"spread-data-storage-practice-1/src/utils/objects"
+	"spread-data-storage-practice-1/src/utils/websocket"
 	"strings"
 )
 
 type StoreServer struct {
-	adapter *adapters.DatabaseAdapter
-	manager *objects.TransactionManager
-	journal *[]objects.Request
+	adapter   *adapters.DatabaseAdapter
+	websocket *websocket.ClusterSocket
+	manager   *objects.TransactionManager
+	journal   *[]objects.Request
 }
 
-func CreateStoreServer(adapter *adapters.DatabaseAdapter, manager *objects.TransactionManager, journal *[]objects.Request) *StoreServer {
-	return &StoreServer{adapter: adapter, manager: manager, journal: journal}
+func CreateStoreServer(adapter *adapters.DatabaseAdapter, socket *websocket.ClusterSocket, manager *objects.TransactionManager, journal *[]objects.Request) *StoreServer {
+	return &StoreServer{adapter: adapter, manager: manager, websocket: socket, journal: journal}
 }
 
 func (server *StoreServer) RequestValue(w http.ResponseWriter, r *http.Request) {
@@ -89,5 +91,6 @@ func (server *StoreServer) PutValue(w http.ResponseWriter, r *http.Request, key 
 		return
 	}
 
+	server.websocket.ReplicateValue(key, value)
 	makeErrorResponse(w, "success", http.StatusOK)
 }

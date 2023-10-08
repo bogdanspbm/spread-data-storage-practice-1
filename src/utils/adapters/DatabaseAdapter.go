@@ -7,6 +7,7 @@ import (
 
 type DatabaseAdapter struct {
 	connection *sql.DB
+	inMem      map[string]string
 }
 
 type Data struct {
@@ -15,11 +16,20 @@ type Data struct {
 }
 
 func CreateDatabaseAdapter(connection *sql.DB) *DatabaseAdapter {
-	return &DatabaseAdapter{connection: connection}
+	return &DatabaseAdapter{connection: connection, inMem: make(map[string]string)}
+}
+
+func (adapter *DatabaseAdapter) GetAllValues() []string {
+	output := make([]string, 0)
+	for k, v := range adapter.inMem {
+		output = append(output, k)
+		output = append(output, v)
+	}
+	return output
 }
 
 func (adapter *DatabaseAdapter) GetValue(key string) (string, error) {
-	rows, err := adapter.connection.Query("SELECT * FROM stored_data WHERE key=$1", key)
+	/*rows, err := adapter.connection.Query("SELECT * FROM stored_data WHERE key=$1", key)
 	defer rows.Close()
 
 	if err != nil {
@@ -39,16 +49,28 @@ func (adapter *DatabaseAdapter) GetValue(key string) (string, error) {
 		return value, nil
 	}
 
-	return "", errors.New("can't find key")
+	return "", errors.New("can't find key")*/
+
+	v, ok := adapter.inMem[key]
+
+	var err error
+
+	if !ok {
+		err = errors.New("empty value")
+	}
+
+	return v, err
 }
 
 func (adapter *DatabaseAdapter) SetValue(key string, value string) (int64, error) {
-	query := "INSERT INTO stored_data (key, value)  VALUES($1,$2)  ON CONFLICT(key)  DO UPDATE SET value=excluded.value;"
+	adapter.inMem[key] = value
+	return int64(len(adapter.inMem)), nil
+	/*query := "INSERT INTO stored_data (key, value)  VALUES($1,$2)  ON CONFLICT(key)  DO UPDATE SET value=excluded.value;"
 	res, err := adapter.connection.Exec(query, key, value)
 
 	if err != nil {
 		return -1, err
 	}
 
-	return res.LastInsertId()
+	return res.LastInsertId()*/
 }

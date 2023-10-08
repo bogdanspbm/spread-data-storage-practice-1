@@ -7,6 +7,7 @@ import (
 	"spread-data-storage-practice-1/src/utils/adapters"
 	"spread-data-storage-practice-1/src/utils/objects"
 	"spread-data-storage-practice-1/src/utils/ports"
+	"spread-data-storage-practice-1/src/utils/websocket"
 )
 
 var startPort = 3000
@@ -22,7 +23,8 @@ func main() {
 
 	adapter := adapters.CreateDatabaseAdapter(database)
 	manager := objects.CreateTransactionManager(adapter)
-	server := utils.CreateServer(adapter, manager)
+	socket := websocket.CreateClusterSocket(adapter)
+	server := utils.CreateServer(adapter, socket, manager)
 
 	port := ports.FindAvailablePort(startPort)
 	server.Start(port)

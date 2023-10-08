@@ -30,6 +30,8 @@
                 var key = replace["key"].value;
                 var value = replace["value"].value;
 
+                console.log(key, value)
+
                 var res = fetch("/store/" + key, {
                     method: "POST",
                     body: value

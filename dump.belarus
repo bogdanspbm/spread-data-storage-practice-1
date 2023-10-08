@@ -1,0 +1,6 @@
+put_value
+key,gold
+put_value
+apple,red
+get_value
+apple

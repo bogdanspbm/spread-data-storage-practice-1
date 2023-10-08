@@ -2,19 +2,35 @@ package websocket
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"net/http"
 	"net/url"
+	"spread-data-storage-practice-1/src/utils/adapters"
 )
 
 type ClusterSocket struct {
-	socket *websocket.Upgrader
+	database    *adapters.DatabaseAdapter
+	socket      *websocket.Upgrader
+	connections []*websocket.Conn
+}
+
+func CreateClusterSocket(database *adapters.DatabaseAdapter) *ClusterSocket {
+	socket := websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			return true // Allow connections from any origin
+		},
+	}
+	return &ClusterSocket{database: database, socket: &socket, connections: make([]*websocket.Conn, 4)}
 }
 
 type SocketMessage struct {
-	EType string `json:"eType"`
-	EName string `json:"eName"`
+	EType      string   `json:"eType"`
+	EName      string   `json:"eName"`
+	EArguments []string `json:"EArguments"`
 }
 
 func (message SocketMessage) toString() []byte {
@@ -26,25 +42,52 @@ func (message SocketMessage) toString() []byte {
 	return jsonString
 }
 
-func (message SocketMessage) processMessage(conn *websocket.Conn) {
+func (socket *ClusterSocket) processMessage(message SocketMessage, conn *websocket.Conn) {
 	fmt.Println(string(message.toString()))
 
 	switch message.EType {
 	case "connection":
-		response := SocketMessage{"connection_response", "Connection Accepted"}
+		response := SocketMessage{"connection_response", "Connection Accepted", nil}
 		conn.WriteMessage(websocket.TextMessage, response.toString())
+		socket.ReplicateAllValues(conn)
+	case "full_replication":
+		for i := 0; i < len(message.EArguments)-1; i += 2 {
+			key := message.EArguments[i]
+			value := message.EArguments[i+1]
+
+			socket.database.SetValue(key, value)
+		}
+	case "replicate_value":
+		if len(message.EArguments) < 2 {
+			response := SocketMessage{"replicate_value_response", "Bad Arguments", nil}
+			conn.WriteMessage(websocket.TextMessage, response.toString())
+			break
+		}
+
+		key := message.EArguments[0]
+		value := message.EArguments[1]
+
+		socket.database.SetValue(key, value)
 	}
 }
 
-func CreateClusterSocket() *ClusterSocket {
-	socket := websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-		CheckOrigin: func(r *http.Request) bool {
-			return true // Allow connections from any origin
-		},
+func (socket *ClusterSocket) ReplicateValue(key string, value string) {
+	for _, conn := range socket.connections {
+		if conn == nil {
+			continue
+		}
+		message := SocketMessage{"replicate_value", "Value Replication", []string{key, value}}
+		conn.WriteMessage(websocket.TextMessage, message.toString())
 	}
-	return &ClusterSocket{socket: &socket}
+}
+
+func (socket *ClusterSocket) ReplicateAllValues(conn *websocket.Conn) {
+	if conn == nil {
+		return
+	}
+
+	message := SocketMessage{"full_replication", "Replicate All Values", socket.database.GetAllValues()}
+	conn.WriteMessage(websocket.TextMessage, message.toString())
 }
 
 func (socket *ClusterSocket) Handler(w http.ResponseWriter, r *http.Request) {
@@ -55,30 +98,55 @@ func (socket *ClusterSocket) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	for {
-		messageType, p, err := conn.ReadMessage()
+	socket.connections = append(socket.connections, conn)
+	opened := true
+
+	conn.SetCloseHandler(func(code int, text string) error {
+		opened = false
+		fmt.Printf("WebSocket closed: %v (%s)\n", code, text)
+		return nil
+	})
+
+	for opened {
+		err := socket.handleNewMessage(conn)
+
 		if err != nil {
-			return
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				opened = false
+			}
 		}
+	}
+}
 
-		switch messageType {
-		case websocket.TextMessage:
-			{
-				var message SocketMessage
+func (socket *ClusterSocket) handleNewMessage(conn *websocket.Conn) error {
 
-				err := json.Unmarshal(p, &message)
-				if err == nil && message.EType != "" {
-					message.processMessage(conn)
-					break
-				}
+	if conn == nil {
+		return errors.New("nil connection")
+	}
 
-				var response = SocketMessage{"exception", "Unsupported Message Type"}
-				err = conn.WriteMessage(websocket.TextMessage, response.toString())
+	messageType, p, err := conn.ReadMessage()
+	if err != nil {
+		return err
+	}
+
+	switch messageType {
+	case websocket.TextMessage:
+		{
+			var message SocketMessage
+
+			err := json.Unmarshal(p, &message)
+			if err == nil && message.EType != "" {
+				socket.processMessage(message, conn)
+				break
 			}
 
+			var response = SocketMessage{"exception", "Unsupported Message Type", nil}
+			err = conn.WriteMessage(websocket.TextMessage, response.toString())
 		}
 
 	}
+
+	return nil
 }
 
 func (socket *ClusterSocket) ConnectToNode(port int) {
@@ -90,38 +158,39 @@ func (socket *ClusterSocket) ConnectToNode(port int) {
 		return
 	}
 
-	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	defer c.Close()
+	defer conn.Close()
 
-	eventMessage := SocketMessage{"connect", "New Cluster Connected"}
+	socket.connections = append(socket.connections, conn)
 
-	err = c.WriteMessage(websocket.TextMessage, eventMessage.toString())
+	eventMessage := SocketMessage{"connection", "New Cluster Connected", nil}
+
+	err = conn.WriteMessage(websocket.TextMessage, eventMessage.toString())
 
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	done := make(chan struct{})
+	opened := true
 
-	go func() {
-		defer close(done)
-		for {
-			_, message, err := c.ReadMessage()
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			fmt.Printf("Received: %s\n", message)
-		}
-	}()
-
-	c.SetCloseHandler(func(code int, text string) error {
+	conn.SetCloseHandler(func(code int, text string) error {
+		opened = false
 		fmt.Printf("WebSocket closed: %v (%s)\n", code, text)
 		return nil
 	})
+
+	for opened {
+		err := socket.handleNewMessage(conn)
+
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				opened = false
+			}
+		}
+	}
 }
