@@ -13,6 +13,7 @@ import (
 )
 
 type Server struct {
+	Port               int
 	DatabaseAdapter    *adapters.DatabaseAdapter
 	TransactionManager *objects.TransactionManager
 	RequestJournal     []objects.Request
@@ -35,14 +36,30 @@ func (server *Server) prepare() {
 	pingHandler := http.HandlerFunc(requests.Ping)
 	http.Handle("/", pingHandler)
 
+	// Bind Test Page
+	testPageHandler := http.HandlerFunc(requests.TestPage)
+	http.Handle("/test", testPageHandler)
+
 	// Create Socket
 	socket := websocket.CreateClusterSocket()
 	socketHandler := http.HandlerFunc(socket.Handler)
 	http.Handle("/ws", socketHandler)
 }
 
+func (server *Server) establishClusterConnection() {
+	socket := websocket.CreateClusterSocket()
+	socket.ConnectToNode(3000)
+}
+
 func (server *Server) Start(port int) {
-	fmt.Println(fmt.Sprintf("<---- Starting Server at Port: %v", port))
+	fmt.Println(fmt.Sprintf("<---- Starting Server at Port: %v ---->", port))
+
+	server.Port = port
+
+	if port > 3000 {
+		server.establishClusterConnection()
+	}
+
 	http.ListenAndServe(fmt.Sprintf(":%v", port), nil)
 }
 

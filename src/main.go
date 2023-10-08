@@ -6,7 +6,10 @@ import (
 	"spread-data-storage-practice-1/src/utils"
 	"spread-data-storage-practice-1/src/utils/adapters"
 	"spread-data-storage-practice-1/src/utils/objects"
+	"spread-data-storage-practice-1/src/utils/ports"
 )
+
+var startPort = 3000
 
 func main() {
 	database, err := sql.Open("sqlite3", "database.sqlite")
@@ -20,5 +23,7 @@ func main() {
 	adapter := adapters.CreateDatabaseAdapter(database)
 	manager := objects.CreateTransactionManager(adapter)
 	server := utils.CreateServer(adapter, manager)
-	server.Start(3000)
+
+	port := ports.FindAvailablePort(startPort)
+	server.Start(port)
 }
