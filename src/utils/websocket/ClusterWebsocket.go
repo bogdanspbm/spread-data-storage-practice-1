@@ -8,15 +8,20 @@ import (
 	"net/http"
 	"net/url"
 	"spread-data-storage-practice-1/src/utils/adapters"
+	"strconv"
 )
 
 type ClusterSocket struct {
 	database    *adapters.DatabaseAdapter
 	socket      *websocket.Upgrader
 	connections []*websocket.Conn
+	status      string
+	leaderPort  string
+	source      string
+	logicTime   int
 }
 
-func CreateClusterSocket(database *adapters.DatabaseAdapter) *ClusterSocket {
+func CreateClusterSocket(port string, database *adapters.DatabaseAdapter) *ClusterSocket {
 	socket := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -24,10 +29,12 @@ func CreateClusterSocket(database *adapters.DatabaseAdapter) *ClusterSocket {
 			return true // Allow connections from any origin
 		},
 	}
-	return &ClusterSocket{database: database, socket: &socket, connections: make([]*websocket.Conn, 4)}
+	return &ClusterSocket{database: database, socket: &socket, connections: make([]*websocket.Conn, 4), source: port, logicTime: 0}
 }
 
 type SocketMessage struct {
+	Source     string   `json:"source"`
+	LogicTime  int      `json:"logicTime"`
 	EType      string   `json:"eType"`
 	EName      string   `json:"eName"`
 	EArguments []string `json:"EArguments"`
@@ -42,24 +49,39 @@ func (message SocketMessage) toString() []byte {
 	return jsonString
 }
 
+func (socket *ClusterSocket) IsLeader() bool {
+	return socket.status == "leader"
+}
+
+func (socket *ClusterSocket) GetLeaderPort() string {
+	return socket.leaderPort
+}
+
 func (socket *ClusterSocket) processMessage(message SocketMessage, conn *websocket.Conn) {
-	fmt.Println(string(message.toString()))
 
 	switch message.EType {
 	case "connection":
-		response := SocketMessage{"connection_response", "Connection Accepted", nil}
+		socket.status = "leader"
+		response := SocketMessage{socket.source, socket.GetLogicTimeInc(), "connection_response", "Connection Accepted", nil}
 		conn.WriteMessage(websocket.TextMessage, response.toString())
 		socket.ReplicateAllValues(conn)
 	case "full_replication":
-		for i := 0; i < len(message.EArguments)-1; i += 2 {
+		for i := 0; i < len(message.EArguments)-1; i += 3 {
 			key := message.EArguments[i]
 			value := message.EArguments[i+1]
+			versionStr := message.EArguments[i+2]
+			version, _ := strconv.Atoi(versionStr)
 
-			socket.database.SetValue(key, value)
+			socket.database.SetVersionValue(key, value, version)
 		}
 	case "replicate_value":
+
+		if message.LogicTime < socket.logicTime {
+			break
+		}
+
 		if len(message.EArguments) < 2 {
-			response := SocketMessage{"replicate_value_response", "Bad Arguments", nil}
+			response := SocketMessage{socket.source, socket.GetLogicTimeInc(), "replicate_value_response", "Bad Arguments", nil}
 			conn.WriteMessage(websocket.TextMessage, response.toString())
 			break
 		}
@@ -67,7 +89,11 @@ func (socket *ClusterSocket) processMessage(message SocketMessage, conn *websock
 		key := message.EArguments[0]
 		value := message.EArguments[1]
 
-		socket.database.SetValue(key, value)
+		socket.database.SetVersionValue(key, value, message.LogicTime)
+	}
+
+	if message.LogicTime >= socket.logicTime {
+		socket.logicTime = message.LogicTime + 1
 	}
 }
 
@@ -76,7 +102,7 @@ func (socket *ClusterSocket) ReplicateValue(key string, value string) {
 		if conn == nil {
 			continue
 		}
-		message := SocketMessage{"replicate_value", "Value Replication", []string{key, value}}
+		message := SocketMessage{socket.source, socket.GetLogicTimeInc(), "replicate_value", "Value Replication", []string{key, value}}
 		conn.WriteMessage(websocket.TextMessage, message.toString())
 	}
 }
@@ -86,7 +112,7 @@ func (socket *ClusterSocket) ReplicateAllValues(conn *websocket.Conn) {
 		return
 	}
 
-	message := SocketMessage{"full_replication", "Replicate All Values", socket.database.GetAllValues()}
+	message := SocketMessage{socket.source, socket.GetLogicTimeInc(), "full_replication", "Replicate All Values", socket.database.GetAllValues()}
 	conn.WriteMessage(websocket.TextMessage, message.toString())
 }
 
@@ -118,6 +144,11 @@ func (socket *ClusterSocket) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (socket *ClusterSocket) GetLogicTimeInc() int {
+	socket.logicTime += 1
+	return socket.logicTime
+}
+
 func (socket *ClusterSocket) handleNewMessage(conn *websocket.Conn) error {
 
 	if conn == nil {
@@ -140,7 +171,7 @@ func (socket *ClusterSocket) handleNewMessage(conn *websocket.Conn) error {
 				break
 			}
 
-			var response = SocketMessage{"exception", "Unsupported Message Type", nil}
+			var response = SocketMessage{socket.source, socket.GetLogicTimeInc(), "exception", "Unsupported Message Type", nil}
 			err = conn.WriteMessage(websocket.TextMessage, response.toString())
 		}
 
@@ -165,9 +196,12 @@ func (socket *ClusterSocket) ConnectToNode(port int) {
 	}
 	defer conn.Close()
 
+	socket.status = "follower"
+	socket.leaderPort = fmt.Sprintf("%v", port)
+
 	socket.connections = append(socket.connections, conn)
 
-	eventMessage := SocketMessage{"connection", "New Cluster Connected", nil}
+	eventMessage := SocketMessage{socket.source, socket.GetLogicTimeInc(), "connection", "New Cluster Connected", nil}
 
 	err = conn.WriteMessage(websocket.TextMessage, eventMessage.toString())
 

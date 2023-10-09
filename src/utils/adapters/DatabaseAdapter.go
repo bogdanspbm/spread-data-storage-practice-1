@@ -3,11 +3,12 @@ package adapters
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 )
 
 type DatabaseAdapter struct {
 	connection *sql.DB
-	inMem      map[string]string
+	inMem      map[string]VersionValue
 }
 
 type Data struct {
@@ -15,20 +16,32 @@ type Data struct {
 	Value string `json:"value" db:"value"`
 }
 
+type VersionData struct {
+	Key     string `json:"key" db:"key"`
+	Value   string `json:"value" db:"value"`
+	Version int    `json:"version" db:"version"`
+}
+
+type VersionValue struct {
+	Value   string `json:"value" db:"value"`
+	Version int    `json:"version" db:"version"`
+}
+
 func CreateDatabaseAdapter(connection *sql.DB) *DatabaseAdapter {
-	return &DatabaseAdapter{connection: connection, inMem: make(map[string]string)}
+	return &DatabaseAdapter{connection: connection, inMem: make(map[string]VersionValue)}
 }
 
 func (adapter *DatabaseAdapter) GetAllValues() []string {
 	output := make([]string, 0)
 	for k, v := range adapter.inMem {
 		output = append(output, k)
-		output = append(output, v)
+		output = append(output, v.Value)
+		output = append(output, fmt.Sprint("%v", v.Version))
 	}
 	return output
 }
 
-func (adapter *DatabaseAdapter) GetValue(key string) (string, error) {
+func (adapter *DatabaseAdapter) GetValue(key string) (VersionValue, error) {
 	/*rows, err := adapter.connection.Query("SELECT * FROM stored_data WHERE key=$1", key)
 	defer rows.Close()
 
@@ -62,7 +75,7 @@ func (adapter *DatabaseAdapter) GetValue(key string) (string, error) {
 	return v, err
 }
 
-func (adapter *DatabaseAdapter) SetValue(key string, value string) (int64, error) {
+func (adapter *DatabaseAdapter) SetValue(key string, value VersionValue) (int64, error) {
 	adapter.inMem[key] = value
 	return int64(len(adapter.inMem)), nil
 	/*query := "INSERT INTO stored_data (key, value)  VALUES($1,$2)  ON CONFLICT(key)  DO UPDATE SET value=excluded.value;"
@@ -73,4 +86,15 @@ func (adapter *DatabaseAdapter) SetValue(key string, value string) (int64, error
 	}
 
 	return res.LastInsertId()*/
+}
+
+func (adapter *DatabaseAdapter) SetVersionValue(key string, value string, version int) (int64, error) {
+	oldValue, _ := adapter.GetValue(key)
+
+	if oldValue.Version > version {
+		return -1, errors.New("database version is bigger")
+	}
+
+	adapter.inMem[key] = VersionValue{value, version}
+	return int64(len(adapter.inMem)), nil
 }

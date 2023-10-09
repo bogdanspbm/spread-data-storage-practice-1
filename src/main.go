@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	_ "github.com/mattn/go-sqlite3" // Import the SQLite driver
 	"spread-data-storage-practice-1/src/utils"
 	"spread-data-storage-practice-1/src/utils/adapters"
@@ -21,11 +22,12 @@ func main() {
 
 	defer database.Close()
 
+	port := ports.FindAvailablePort(startPort)
+
 	adapter := adapters.CreateDatabaseAdapter(database)
-	manager := objects.CreateTransactionManager(adapter)
-	socket := websocket.CreateClusterSocket(adapter)
+	socket := websocket.CreateClusterSocket(fmt.Sprint("bogdamspbm:%v", port), adapter)
+	manager := objects.CreateTransactionManager(adapter, socket)
 	server := utils.CreateServer(adapter, socket, manager)
 
-	port := ports.FindAvailablePort(startPort)
 	server.Start(port)
 }
