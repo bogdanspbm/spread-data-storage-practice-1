@@ -9,16 +9,18 @@ import (
 	"net/url"
 	"spread-data-storage-practice-1/src/utils/adapters"
 	"strconv"
+	"time"
 )
 
 type ClusterSocket struct {
-	database    *adapters.DatabaseAdapter
-	socket      *websocket.Upgrader
-	connections []*websocket.Conn
-	status      string
-	leaderPort  string
-	source      string
-	logicTime   int
+	database         *adapters.DatabaseAdapter
+	socket           *websocket.Upgrader
+	connections      map[*websocket.Conn]bool
+	leaderConnection *websocket.Conn
+	status           string
+	leaderPort       string
+	source           string
+	logicTime        int
 }
 
 func CreateClusterSocket(port string, database *adapters.DatabaseAdapter) *ClusterSocket {
@@ -29,7 +31,7 @@ func CreateClusterSocket(port string, database *adapters.DatabaseAdapter) *Clust
 			return true // Allow connections from any origin
 		},
 	}
-	return &ClusterSocket{database: database, socket: &socket, connections: make([]*websocket.Conn, 4), source: port, logicTime: 0}
+	return &ClusterSocket{database: database, socket: &socket, connections: make(map[*websocket.Conn]bool, 4), source: port, logicTime: 0}
 }
 
 type SocketMessage struct {
@@ -98,8 +100,8 @@ func (socket *ClusterSocket) processMessage(message SocketMessage, conn *websock
 }
 
 func (socket *ClusterSocket) ReplicateValue(key string, value string) {
-	for _, conn := range socket.connections {
-		if conn == nil {
+	for conn, opened := range socket.connections {
+		if conn == nil || !opened {
 			continue
 		}
 		message := SocketMessage{socket.source, socket.GetLogicTimeInc(), "replicate_value", "Value Replication", []string{key, value}}
@@ -124,22 +126,28 @@ func (socket *ClusterSocket) Handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	socket.connections = append(socket.connections, conn)
-	opened := true
+	socket.connections[conn] = true
 
 	conn.SetCloseHandler(func(code int, text string) error {
-		opened = false
+		socket.connections[conn] = false
 		fmt.Printf("WebSocket closed: %v (%s)\n", code, text)
 		return nil
 	})
 
-	for opened {
+	counter := 0
+
+	for socket.connections[conn] {
 		err := socket.handleNewMessage(conn)
 
 		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				opened = false
-			}
+			counter += 1
+		} else {
+			counter = 0
+		}
+
+		if counter > 10 {
+			fmt.Println("Close Websocket Connection")
+			socket.connections[conn] = false
 		}
 	}
 }
@@ -180,8 +188,38 @@ func (socket *ClusterSocket) handleNewMessage(conn *websocket.Conn) error {
 	return nil
 }
 
+func (socket *ClusterSocket) pingLeader() {
+	counter := 0
+
+	for {
+		if socket.leaderConnection != nil {
+			err := socket.leaderConnection.WriteMessage(websocket.TextMessage, []byte("{}"))
+
+			if err != nil {
+				counter += 1
+			} else {
+				fmt.Println("Success ping leader")
+				counter = 0
+			}
+
+			if counter >= 4 {
+				counter = 0
+				socket.connections[socket.leaderConnection] = false
+				socket.leaderConnection.Close()
+				socket.leaderConnection = nil
+				socket.status = "leader"
+				fmt.Println("Can't reach leader. Become a leader")
+			}
+
+		}
+		time.Sleep(10 * time.Second)
+	}
+}
+
 func (socket *ClusterSocket) ConnectToNode(port int) {
 	addr := fmt.Sprintf("ws://127.0.0.1:%v/ws", port)
+
+	go socket.pingLeader()
 
 	u, err := url.Parse(addr)
 	if err != nil {
@@ -199,7 +237,8 @@ func (socket *ClusterSocket) ConnectToNode(port int) {
 	socket.status = "follower"
 	socket.leaderPort = fmt.Sprintf("%v", port)
 
-	socket.connections = append(socket.connections, conn)
+	socket.connections[conn] = true
+	socket.leaderConnection = conn
 
 	eventMessage := SocketMessage{socket.source, socket.GetLogicTimeInc(), "connection", "New Cluster Connected", nil}
 
@@ -210,21 +249,26 @@ func (socket *ClusterSocket) ConnectToNode(port int) {
 		return
 	}
 
-	opened := true
-
 	conn.SetCloseHandler(func(code int, text string) error {
-		opened = false
+		socket.connections[conn] = false
 		fmt.Printf("WebSocket closed: %v (%s)\n", code, text)
 		return nil
 	})
 
-	for opened {
+	counter := 0
+
+	for socket.connections[conn] {
 		err := socket.handleNewMessage(conn)
 
 		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				opened = false
-			}
+			counter += 1
+		} else {
+			counter = 0
+		}
+
+		if counter > 10 {
+			fmt.Println("Close Websocket Connection")
+			socket.connections[conn] = false
 		}
 	}
 }

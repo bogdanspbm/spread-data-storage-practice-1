@@ -6,6 +6,7 @@ import (
 	"os"
 	"spread-data-storage-practice-1/src/utils/adapters"
 	"spread-data-storage-practice-1/src/utils/objects"
+	"spread-data-storage-practice-1/src/utils/ports"
 	"spread-data-storage-practice-1/src/utils/requests"
 	"spread-data-storage-practice-1/src/utils/websocket"
 	"strings"
@@ -55,8 +56,12 @@ func (server *Server) Start(port int) {
 
 	server.Port = port
 
-	if port > 3000 {
-		go server.establishClusterConnection()
+	if port > 3000 && !ports.IsPortOpen(3000) {
+		go server.Websocket.ConnectToNode(3000)
+	}
+
+	if port == 3000 && !ports.IsPortOpen(3001) {
+		go server.Websocket.ConnectToNode(3001)
 	}
 
 	http.ListenAndServe(fmt.Sprintf(":%v", port), nil)
