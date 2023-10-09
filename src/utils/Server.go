@@ -38,6 +38,10 @@ func (server *Server) prepare() {
 	pingHandler := http.HandlerFunc(requests.Ping)
 	http.Handle("/", pingHandler)
 
+	// Bind Clock
+	clockHandler := http.HandlerFunc(storeServer.GetClock)
+	http.Handle("/vclock", clockHandler)
+
 	// Bind Test Page
 	testPageHandler := http.HandlerFunc(requests.TestPage)
 	http.Handle("/test", testPageHandler)
@@ -62,6 +66,8 @@ func (server *Server) Start(port int) {
 
 	if port == 3000 && !ports.IsPortOpen(3001) {
 		go server.Websocket.ConnectToNode(3001)
+	} else if port == 3000 {
+		server.Websocket.SetStatus("leader")
 	}
 
 	http.ListenAndServe(fmt.Sprintf(":%v", port), nil)

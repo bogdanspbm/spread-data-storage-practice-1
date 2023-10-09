@@ -25,7 +25,7 @@ func main() {
 	port := ports.FindAvailablePort(startPort)
 
 	adapter := adapters.CreateDatabaseAdapter(database)
-	socket := websocket.CreateClusterSocket(fmt.Sprint("bogdamspbm:%v", port), adapter)
+	socket := websocket.CreateClusterSocket(fmt.Sprint("%v", port), adapter)
 	manager := objects.CreateTransactionManager(adapter, socket)
 	server := utils.CreateServer(adapter, socket, manager)
 

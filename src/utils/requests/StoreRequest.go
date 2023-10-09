@@ -24,6 +24,11 @@ func CreateStoreServer(adapter *adapters.DatabaseAdapter, socket *websocket.Clus
 	return &StoreServer{adapter: adapter, manager: manager, websocket: socket, journal: journal}
 }
 
+func (server *StoreServer) GetClock(w http.ResponseWriter, r *http.Request) {
+	setSuccessHeader(w)
+	makeErrorResponse(w, fmt.Sprintf("%v", server.websocket.GetLogicTime()), http.StatusOK)
+}
+
 func (server *StoreServer) RequestValue(w http.ResponseWriter, r *http.Request) {
 	setSuccessHeader(w)
 

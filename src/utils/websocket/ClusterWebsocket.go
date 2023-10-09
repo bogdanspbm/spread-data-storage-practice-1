@@ -157,6 +157,14 @@ func (socket *ClusterSocket) GetLogicTimeInc() int {
 	return socket.logicTime
 }
 
+func (socket *ClusterSocket) GetLogicTime() int {
+	return socket.logicTime
+}
+
+func (socket *ClusterSocket) SetStatus(status string) {
+	socket.status = status
+}
+
 func (socket *ClusterSocket) handleNewMessage(conn *websocket.Conn) error {
 
 	if conn == nil {
@@ -208,6 +216,7 @@ func (socket *ClusterSocket) pingLeader() {
 				socket.leaderConnection.Close()
 				socket.leaderConnection = nil
 				socket.status = "leader"
+				socket.leaderPort = socket.source
 				fmt.Println("Can't reach leader. Become a leader")
 			}
 
