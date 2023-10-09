@@ -3,6 +3,7 @@ package objects
 import (
 	"errors"
 	"spread-data-storage-practice-1/src/utils/adapters"
+	"spread-data-storage-practice-1/src/utils/websocket"
 )
 
 type Request struct {
@@ -19,12 +20,13 @@ type TransactionManager struct {
 	requestQueue  chan Request
 	responseQueue chan Response
 	database      *adapters.DatabaseAdapter
+	socket        *websocket.ClusterSocket
 }
 
-func CreateTransactionManager(database *adapters.DatabaseAdapter) *TransactionManager {
+func CreateTransactionManager(database *adapters.DatabaseAdapter, socket *websocket.ClusterSocket) *TransactionManager {
 	requestQueue := make(chan Request)
 	responseQueue := make(chan Response)
-	manager := &TransactionManager{requestQueue: requestQueue, responseQueue: responseQueue, database: database}
+	manager := &TransactionManager{requestQueue: requestQueue, responseQueue: responseQueue, database: database, socket: socket}
 	go manager.managerTick()
 	return manager
 }
@@ -43,7 +45,7 @@ func (manager *TransactionManager) managerTick() {
 }
 
 func (manager *TransactionManager) calculateResponse(request Request) Response {
-	command := request.buildCommand(manager.database)
+	command := request.buildCommand(manager.database, manager.socket)
 
 	if command == nil {
 		return Response{Error: errors.New("bad command")}
@@ -53,7 +55,7 @@ func (manager *TransactionManager) calculateResponse(request Request) Response {
 }
 
 // TODO: По хорошему тут надо сделать под каждый контроллер надстройку в отдельном файле
-func (requset *Request) buildCommand(database *adapters.DatabaseAdapter) func() Response {
+func (requset *Request) buildCommand(database *adapters.DatabaseAdapter, socket *websocket.ClusterSocket) func() Response {
 	switch requset.Name {
 	case "put_value":
 		return func() Response {
@@ -64,8 +66,14 @@ func (requset *Request) buildCommand(database *adapters.DatabaseAdapter) func() 
 				return resp
 			}
 
-			_, err := database.SetValue(requset.Args[0], requset.Args[1])
+			_, err := database.SetVersionValue(requset.Args[0], requset.Args[1], socket.GetLogicTimeInc())
+
+			if err == nil {
+				socket.ReplicateValue(requset.Args[0], requset.Args[1])
+			}
+
 			resp.Error = err
+
 			return resp
 		}
 	case "get_value":
@@ -78,7 +86,7 @@ func (requset *Request) buildCommand(database *adapters.DatabaseAdapter) func() 
 			}
 
 			value, err := database.GetValue(requset.Args[0])
-			resp.Body = value
+			resp.Body = value.Value
 			resp.Error = err
 			return resp
 		}

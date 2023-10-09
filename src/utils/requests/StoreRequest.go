@@ -1,22 +1,27 @@
 package requests
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"spread-data-storage-practice-1/src/utils/adapters"
 	"spread-data-storage-practice-1/src/utils/objects"
+	"spread-data-storage-practice-1/src/utils/websocket"
 	"strings"
 )
 
 type StoreServer struct {
-	adapter *adapters.DatabaseAdapter
-	manager *objects.TransactionManager
-	journal *[]objects.Request
+	adapter   *adapters.DatabaseAdapter
+	websocket *websocket.ClusterSocket
+	manager   *objects.TransactionManager
+	journal   *[]objects.Request
 }
 
-func CreateStoreServer(adapter *adapters.DatabaseAdapter, manager *objects.TransactionManager, journal *[]objects.Request) *StoreServer {
-	return &StoreServer{adapter: adapter, manager: manager, journal: journal}
+func CreateStoreServer(adapter *adapters.DatabaseAdapter, socket *websocket.ClusterSocket, manager *objects.TransactionManager, journal *[]objects.Request) *StoreServer {
+	return &StoreServer{adapter: adapter, manager: manager, websocket: socket, journal: journal}
 }
 
 func (server *StoreServer) RequestValue(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +71,11 @@ func (server *StoreServer) GetValue(w http.ResponseWriter, key string) {
 
 func (server *StoreServer) PutValue(w http.ResponseWriter, r *http.Request, key string) {
 
+	if !server.websocket.IsLeader() {
+		server.redirectHandler(w, r)
+		return
+	}
+
 	data, err := ioutil.ReadAll(r.Body)
 
 	if err != nil {
@@ -90,4 +100,61 @@ func (server *StoreServer) PutValue(w http.ResponseWriter, r *http.Request, key 
 	}
 
 	makeErrorResponse(w, "success", http.StatusOK)
+}
+
+func (server *StoreServer) redirectHandler(w http.ResponseWriter, r *http.Request) {
+	// Get the current request URL
+	currentURL := r.URL
+
+	// Create a new URL with the same scheme, host, and path but with the new port
+	newURL := &url.URL{
+		Scheme: "http",
+		Host:   "localhost" + ":" + server.websocket.GetLeaderPort(),
+		Path:   currentURL.Path,
+	}
+
+	// Read the request body
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create a new POST request to the new URL with the same request body
+	req, err := http.NewRequest(http.MethodPost, newURL.String(), bytes.NewBuffer(body))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Copy headers from the original request to the new request
+	for key, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	// Perform the POST request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy the response status code and headers to the original response
+	w.WriteHeader(resp.StatusCode)
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	// Copy the response body to the original response
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }

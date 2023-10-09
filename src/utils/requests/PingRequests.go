@@ -43,3 +43,8 @@ func Ping(w http.ResponseWriter, r *http.Request) {
 
 	http.Error(w, "{\"status\":\"Success\"}", http.StatusOK)
 }
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	filePath := "resources/index.html"
+	http.ServeFile(w, r, filePath)
+}

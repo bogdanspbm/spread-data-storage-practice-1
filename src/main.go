@@ -2,11 +2,16 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	_ "github.com/mattn/go-sqlite3" // Import the SQLite driver
 	"spread-data-storage-practice-1/src/utils"
 	"spread-data-storage-practice-1/src/utils/adapters"
 	"spread-data-storage-practice-1/src/utils/objects"
+	"spread-data-storage-practice-1/src/utils/ports"
+	"spread-data-storage-practice-1/src/utils/websocket"
 )
+
+var startPort = 3000
 
 func main() {
 	database, err := sql.Open("sqlite3", "database.sqlite")
@@ -17,8 +22,12 @@ func main() {
 
 	defer database.Close()
 
+	port := ports.FindAvailablePort(startPort)
+
 	adapter := adapters.CreateDatabaseAdapter(database)
-	manager := objects.CreateTransactionManager(adapter)
-	server := utils.CreateServer(adapter, manager)
-	server.Start(3000)
+	socket := websocket.CreateClusterSocket(fmt.Sprint("bogdamspbm:%v", port), adapter)
+	manager := objects.CreateTransactionManager(adapter, socket)
+	server := utils.CreateServer(adapter, socket, manager)
+
+	server.Start(port)
 }
